@@ -1,2 +1,2 @@
-# bioinformatica
-Repositorio las actividades del master en bioinformatica UAM
+# Bioinformática
+Repositorio las actividades del master en bioinformática UAM
