@@ -1,0 +1,682 @@
+/* Este script crea consultas para completar la practica correspondiente al manejo de datos */
+/*tipo NO-SQL orientado a grafos, ordenados en nodos y las relaciones en aristas */
+
+MATCH (p:Paciente {nombre:'Paciente001'})
+MATCH ruta = (p)-[*1..2]-(x)   // comodín y longitud 1..2
+RETURN
+  p.nombre AS Paciente,
+  [n IN nodes(ruta) | labels(n)[0] + ':' + coalesce(n.nombre, toString(n.id))] AS Nodos,
+  [rel IN relationships(ruta) | type(rel)] AS Tipos,
+  length(ruta) AS saltos
+ORDER BY saltos;
+
+MATCH (p:Paciente)-[:tiene_mutacion_en]->(g2:Gen)
+MATCH (f:Farmaco)-[:es_diana_de]->(g1:Gen)
+MATCH ruta = (g1)-[*1..3]->(g2)   // comodín
+WHERE all(n IN nodes(ruta) WHERE 'Gen' IN labels(n))   // solo pasa por Genes
+RETURN
+  p.nombre AS Paciente,
+  g2.nombre AS Gen_mutado,
+  f.nombre AS Farmaco_candidato,
+  [n IN nodes(ruta) | n.nombre] AS Cadena,
+  [rel IN relationships(ruta) | type(rel)] AS Tipos,
+  length(ruta) AS saltos
+ORDER BY Paciente, saltos ASC;
+
+MATCH (p:Paciente)-[:tiene_mutacion_en]->(g2:Gen)
+MATCH (f:Farmaco)-[:es_diana_de]->(g1:Gen)
+MATCH ruta = (g1)-[:activacion*1..3]->(g2)   // usa el tipo que acabas de crear
+RETURN
+  p.nombre AS Paciente,
+  g2.nombre AS Gen_mutado,
+  f.nombre AS Farmaco_candidato,
+  [n IN nodes(ruta) | n.nombre] AS Cadena_activacion,
+  length(ruta) AS saltos
+ORDER BY Paciente, saltos ASC;
+
+// Relaciones de activación/supresión de prueba
+MERGE (b:Gen {nombre:'BRCA1'})
+MERGE (t:Gen {nombre:'TP53'})
+MERGE (e:Gen {nombre:'EGFR'})
+
+// crea si no existen
+MERGE (b)-[:activacion]->(t)
+MERGE (t)-[:supresion]->(e)
+MERGE (e)-[:activacion]->(b);
+
+MATCH (p:Paciente)-[:tiene_mutacion_en]->(g:Gen)
+MATCH sub = (g)-[:*1..2]-(h:Gen)
+RETURN
+  p.nombre AS Paciente,
+  g.nombre AS Gen_mutado,
+  collect(DISTINCT h.nombre) AS Genes_vecinos_1a2,
+  relationships(sub)         AS Aristas
+LIMIT 50;
+
+MATCH (p:Paciente)-[:tiene_mutacion_en]->(g2:Gen)
+MATCH (f:Farmaco)-[:es_diana_de]->(g1:Gen)
+MATCH ruta = (g1)-[:activa*1..3]->(g2)
+RETURN
+  p.nombre        AS Paciente,
+  g2.nombre       AS Gen_mutado,
+  f.nombre        AS Farmaco_candidato,
+  [n IN nodes(ruta) | n.nombre] AS Cadena_activacion,
+  length(ruta)    AS saltos
+ORDER BY Paciente, saltos ASC;
+
+MATCH (p:Paciente)-[:tiene_mutacion_en]->(g_mutado:Gen)
+WHERE coalesce(p.respuesta,'') NOT IN ['completa','parcial']   // paciente no respondió bien
+
+// gen alternativo conectado en 1..3 saltos por cualquier interacción genetica
+MATCH path = (g_alt:Gen)-[:activa|:suprime*1..3]->(g_mutado)
+
+// fármaco alternativo que es diana de ese gen alternativo
+MATCH (f_alt:Farmaco)-[:es_diana_de]->(g_alt)
+
+// (opcional) evitar sugerir el mismo fármaco ya administrado
+OPTIONAL MATCH (p)-[:recibe_tratamiento_con]->(f_usado:Farmaco)
+WHERE f_alt <> f_usado
+
+RETURN
+  p.nombre            AS Paciente,
+  g_mutado.nombre     AS Gen_mutado,
+  f_alt.nombre        AS Farmaco_alternativo,
+  [n IN nodes(path) | n.nombre] AS Ruta_genes_1a3,
+  length(path)        AS saltos
+ORDER BY Paciente, saltos;
+
+MATCH (f1:Farmaco)-[r1:recibe_tratamiento_con]-(p:Paciente)-[r2:tiene_mutacion_en]-(g:Gen),
+      (f2:Farmaco)-[r3:es_diana_de]-(g:Gen)
+WHERE f1.nombre = f2.nombre
+RETURN f1.nombre, f1, r1, p, r2, g, f2, r3;
+
+MATCH (p1:Paciente) - [r1A:tiene_mutacion_en] - (g1:Gen)
+MATCH (p1) - [r1B:recibe_tratamiento_con] - (f1:Farmaco)
+MATCH (p2:Paciente)-[r2A:tiene_mutacion_en] - (g2:Gen)
+MATCH (p2)-[r2B:recibe_tratamiento_con] - (f2:Farmaco)
+WHERE p1.id <> p2.id AND f1.id = f2.id AND g1.id = g2.id
+RETURN p1.nombre AS Paciente_1, p2.nombre AS Paciente_2, p1, r1A, g1, r1B, p2, r2A, g2, r2B, f2;
+
+MATCH (p1:Paciente) - [r1A:tiene_mutacion_en] - (g1:Gen)
+MATCH (p1) - [r1B:recibe_tratamiento_con] - (f1:Farmaco)
+MATCH (p2:Paciente)-[r2A:tiene_mutacion_en] - (g2:Gen)
+MATCH (p2)-[r2B:recibe_tratamiento_con] - (f2:Farmaco)
+WHERE p1.id <> p2.id AND f1.id = f2.id AND g1.id = g2.id
+RETURN p1.nombre AS Paciente_1, p2.nombre AS Paciente_2, p1, r1A, g, r1B, p2, r2A, r2B, f;
+
+MATCH (p1:Paciente) - [r1A:tiene_mutacion_en] - (g1:Gen)
+MATCH (p1) - [r1B:recibe_tratamiento_con] - (f1:Farmaco)
+MATCH (p2:Paciente)-[r2A:tiene_mutacion_en] - (g2:Gen)
+MATCH (p2)-[r2B:recibe_tratamiento_con] - (f2:Farmaco)
+WHERE p1.id <> p2.id AND f1.id = f2.id AND g1.id = g2.id
+RETURN p1.nombre AS Paciente_1, p2.nombre AS Paciente_2;
+
+MATCH (p1:Paciente)-[r1A:tiene_mutacion_en]-(g1:Gen),
+      (p1)-[r1B:recibe_tratamiento_con]-(f1:Farmaco),
+      (p2:Paciente)-[r2A:tiene_mutacion_en]-(g2:Gen),
+      (p2)-[r2B:recibe_tratamiento_con]-(f2:Farmaco)
+WHERE p1.id <> p2.id AND f1.id = f2.id AND g1.id = g2.id
+RETURN p1.nombre AS Paciente_1, p2.nombre AS Paciente_2;
+
+MATCH (p1:Paciente)--[r1A:tiene_mutacion_en]--(g1:Gen),
+(p1:Paciente)--[r1B:recibe_tratamiento_con]--(f1:Farmaco),
+(p2:Paciente)--[r2A:tiene_mutacion_en]--(g2:Gen),
+(p2:Paciente)--[r2B:recibe_tratamiento_con]--(f2:Farmaco)
+WHERE p1.id <> p2.id AND f1.id = f2.id AND g1.id = g2.id
+RETURN p1.nombre AS Paciente_1, p2.nombre AS Paciente_2, p1, r1A, g1, r1B, p2, r2A, g2, r2B, f2;
+
+MATCH ()-[r]->() RETURN type(r) AS relacion, count(*) AS total ORDER BY total DESC;
+
+MATCH (n) RETURN labels(n) AS etiqueta, count(*) AS total ORDER BY total DESC;
+
+LOAD CSV WITH HEADERS FROM 'file:///es_diana_de.csv' AS row
+MATCH (g:Gen {id: toInteger(row.gen_id)})
+MATCH (f:Farmaco {id: toInteger(row.farmaco_id)})
+CREATE (g)-[d:es_diana_de]->(f)
+RETURN d;
+
+LOAD CSV WITH HEADERS FROM 'file:///recibe_tratamiento_con.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)})
+MATCH (f:Farmaco  {id: toInteger(row.farmaco_id)})
+CREATE (p)-[t:recibe_tratamiento_con {dosis: toInteger(row.dosis)}]->(f)
+RETURN t;
+
+LOAD CSV WITH HEADERS FROM 'file:///tiene_mutacion_en.csv' AS row
+MATCH (p:Paciente {id:toInteger(row.paciente_id)})
+MATCH (g:Gen {id:toInteger(row.gen_id)})
+CREATE (p)-[m:tiene_mutacion_en]->(g)
+RETURN m;
+
+LOAD CSV WITH HEADERS FROM 'file:///farmacos.csv' AS row
+CREATE (:Farmaco {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  mecanismo: row.mecanismo
+});
+
+LOAD CSV WITH HEADERS FROM 'file:///genes.csv' AS row
+CREATE (:Gen {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  mutacion: row.mutacion
+});
+
+LOAD CSV WITH HEADERS FROM 'file:///pacientes.csv' AS row
+CREATE (:Paciente {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  tipo_cancer: row.tipo_cancer,
+  estadio: row.estadio,
+  respuesta: row.respuesta
+});
+
+MATCH (n) DETACH DELETE n;
+
+MATCH (p1:Paciente)--[r1A:tiene_mutacion_en]--(g1:Gen),
+(p1:Paciente)--[r1B:recibe_tratamiento_con]--(f1:Farmaco),
+(p2:Paciente)--[r2A:tiene_mutacion_en]--(g2:Gen),
+(p2:Paciente)--[r2B:recibe_tratamiento_con]--(f2:Farmaco)
+WHERE p1.id <> p2.id AND f1.id = f2.id AND g1.id = g2.id
+RETURN p1.nombre AS Paciente_1, p2.nombre AS Paciente_2, p1, r1A, g1, r1B, p2, r2A, g2, r2B, f2;
+
+MATCH (p1:Paciente) - [:tiene_mutacion_en] - (g:Gen) - [:tiene_mutacion_en] -(p2:Paciente),
+      (p1) - [:recibe_tratamiento_con] - (f:Farmaco) - [:recibe_tratamiento_con] - (p2)
+WHERE p1.id < p2.id           
+RETURN
+  p1.nombre AS paciente_1,
+  p2.nombre AS paciente_2,
+  g.nombre  AS gen,
+  f.nombre  AS farmaco
+ORDER BY gen, farmaco, paciente_1, paciente_2;
+
+MATCH (p:Paciente {id: 1}) SET p.nombre = 'PacienteModificado' RETURN p;
+
+MATCH (p:Paciente {id: 1})
+SET p.nombre = 'PacienteModificado'
+RETURN p;
+
+MATCH (p:Paciente {id: 1})
+SET p.nombre = 'PacienteModificado'
+RETURN p;
+
+MATCH (p:Paciente {nombre: 'Paciente001'})
+REMOVE p.estadio, p.respuesta
+RETURN p;
+
+MATCH (p:Paciente {nombre: "Paciente001"}) RETURN p.estadio, p;
+
+MATCH (p:Paciente {nombre: "Paciente001"});
+
+MATCH ()-[r]->() RETURN type(r) AS relacion, count(*) AS total ORDER BY total DESC;
+
+MATCH (n) RETURN labels(n) AS etiqueta, count(*) AS total ORDER BY total DESC;
+
+LOAD CSV WITH HEADERS FROM 'file:///es_diana_de.csv' AS row
+MATCH (g:Gen {id: toInteger(row.gen_id)})
+MATCH (f:Farmaco {id: toInteger(row.farmaco_id)})
+CREATE (g)-[d:es_diana_de]->(f)
+RETURN d;
+
+LOAD CSV WITH HEADERS FROM 'file:///recibe_tratamiento_con.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)})
+MATCH (f:Farmaco  {id: toInteger(row.farmaco_id)})
+CREATE (p)-[t:recibe_tratamiento_con {dosis: toInteger(row.dosis)}]->(f)
+RETURN t;
+
+LOAD CSV WITH HEADERS FROM 'file:///tiene_mutacion_en.csv' AS row
+MATCH (p:Paciente {id:toInteger(row.paciente_id)})
+MATCH (g:Gen {id:toInteger(row.gen_id)})
+CREATE (p)-[m:tiene_mutacion_en]->(g)
+RETURN m;
+
+LOAD CSV WITH HEADERS FROM 'file:///farmacos.csv' AS row
+CREATE (:Farmaco {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  mecanismo: row.mecanismo
+});
+
+LOAD CSV WITH HEADERS FROM 'file:///genes.csv' AS row
+CREATE (:Gen {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  mutacion: row.mutacion
+});
+
+LOAD CSV WITH HEADERS FROM 'file:///pacientes.csv' AS row
+CREATE (:Paciente {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  tipo_cancer: row.tipo_cancer,
+  estadio: row.estadio,
+  respuesta: row.respuesta
+});
+
+MATCH (n) DETACH DELETE n;
+
+MATCH (p:Paciente {nombre: "Paciente001"});
+
+MATCH (p:Paciente {nombre: "Paciente001"});
+
+MATCH (p:Paciente {nombre: "Paciente001"});
+
+MATCH (p:Paciente {nombre: 'Paciente001'})
+REMOVE p.estadio, p.respuesta
+RETURN p;
+
+MATCH (p:Paciente {nombre: "Paciente001"})
+DETACH DELETE p;
+
+MATCH (p:Paciente) - [r:tiene_mutacion_en] - (g:Gen) WHERE g.nombre IN ['BRCA1', 'TP53'] RETURN p.nombre AS Paciente_BRCA1_TP53, p, r, g;
+
+MATCH (p:Paciente)-[r:tiene_mutacion_en]->(g:Gen)
+WHERE g.nombre IN ['BRCA1', 'TP53']
+RETURN p.nombre AS Paciente_BRCA1_TP53, p, r, g;
+
+MATCH (p:Paciente {tipo_cancer: 'mama'}) - [:recibe_tratamiento_con] - (f:Farmaco)
+RETURN f.nombre AS Farmaco, COUNT(*) AS Frecuencia
+ORDER BY Frecuencia DESC
+LIMIT 1;
+
+MATCH (p:Paciente {tipo_cancer: 'mama'}) -[:recibe_tratamiento_con]-> (f:Farmaco)
+RETURN f.nombre AS Farmaco, COUNT(*) AS Frecuencia
+ORDER BY Frecuencia DESC
+LIMIT 1;
+
+MATCH (p:Paciente {tipo_cancer: 'mama'}) -[:recibe_tratamiento_con]-> (f:Farmaco)
+RETURN MAX(f.nombre);
+
+MATCH (p:Paciente) - [r:recibe_tratamiento_con] - (f:Farmaco {nombre:"Gefitinib"})
+WHERE p.respuesta IN ['completa', 'parcial']RETURN p.nombre AS Pacientes, f, r, p;
+
+MATCH (p:Paciente{nombre: "Paciente001"}) - [r:recibe_tratamiento_con] - (f:Farmaco) - [d:es_diana_de] - (g:Gen) RETURN g.nombre, p, r, f, d, g;
+
+MATCH (p:Paciente{nombre: "Paciente001"}) - [r:recibe_tratamiento_con] -> (f:Farmaco) - [d:es_diana_de] -> (g:Gen) RETURN g.nombre, p, r, f, d, g;
+
+:style
+
+:style
+
+:style edit
+
+:style edit
+
+{
+  "node": {
+    "Paciente": {
+      "caption": "nombre",
+      "color": "#ffb6c1"
+    },
+    "Gen": {
+      "caption": "nombre",
+      "color": "#98fb98"
+    },
+    "Farmaco": {
+      "caption": "nombre",
+      "color": "#ffa07a"
+    }
+  },
+  "relationship": {
+    "tiene_mutacion_en": { "color": "#b0c4de" },
+    "recibe_tratamiento_con": { "color": "#f4a460" },
+    "es_diana_de": { "color": "#20b2aa" }
+  }
+};
+
+:style
+
+:style
+
+:style
+
+MATCH (p:Paciente {tipo_cancer:"pulmón"})-[r:recibe_tratamiento_con]->(f:Farmaco)
+RETURN f.nombre AS Fármaco_pulmón, r, p, f;
+
+MATCH (p:Paciente)-[r:tiene_mutacion_en]->(g:Gen{nombre:"BRCA1"})
+RETURN p.nombre AS Paciente_BRCA1, r, p, g;
+
+MATCH (p:Paciente)-[r]->(x) RETURN p,r,x;
+
+MATCH ()-[r]->() RETURN type(r) AS relacion, count(*) AS total ORDER BY total DESC;
+
+MATCH (n) RETURN labels(n) AS etiqueta, count(*) AS total ORDER BY total DESC;
+
+LOAD CSV WITH HEADERS FROM 'file:///es_diana_de.csv' AS row
+MATCH (g:Gen {id: toInteger(row.gen_id)})
+MATCH (f:Farmaco {id: toInteger(row.farmaco_id)})
+CREATE (g)-[d:es_diana_de]->(f)
+RETURN d;
+
+LOAD CSV WITH HEADERS FROM 'file:///recibe_tratamiento_con.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)})
+MATCH (f:Farmaco  {id: toInteger(row.farmaco_id)})
+CREATE (p)-[t:recibe_tratamiento_con {dosis: toInteger(row.dosis)}]->(f)
+RETURN t;
+
+LOAD CSV WITH HEADERS FROM 'file:///tiene_mutacion_en.csv' AS row
+MATCH (p:Paciente {id:toInteger(row.paciente_id)})
+MATCH (g:Gen {id:toInteger(row.gen_id)})
+CREATE (p)-[m:tiene_mutacion_en]->(g)
+RETURN m;
+
+LOAD CSV WITH HEADERS FROM 'file:///farmacos.csv' AS row
+CREATE (:Farmaco {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  mecanismo: row.mecanismo
+});
+
+LOAD CSV WITH HEADERS FROM 'file:///genes.csv' AS row
+CREATE (:Gen {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  mutacion: row.mutacion
+});
+
+LOAD CSV WITH HEADERS FROM 'file:///pacientes.csv' AS row
+CREATE (:Paciente {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  tipo_cancer: row.tipo_cancer,
+  estadio: row.estadio,
+  respuesta: row.respuesta
+});
+
+MATCH (n) DETACH DELETE n;
+
+MATCH (p:Paciente)-[r:tiene_mutacion_en]->(g:Gen{nombre:"BRCA1"})
+RETURN p.nombre AS Paciente_BRCA1, r, p, g;
+
+MATCH (n:Gen) RETURN n LIMIT 25;
+
+MATCH (n:Gen) RETURN n LIMIT 25;
+
+MATCH (n:Paciente) RETURN n LIMIT 25;
+
+MATCH (n:Farmaco) RETURN n LIMIT 25;
+
+MATCH (n:Gen) RETURN n LIMIT 25;
+
+MATCH (n:Paciente) RETURN n LIMIT 25;
+
+MATCH (p:Paciente {nombre:"Paciente001"})-[r:recibe_tratamiento_con]->(f:Farmaco)-[d:es_diana_de]->(g:Gen)
+RETURN g.nombre, p, r, f, d, g;
+
+MATCH (p:Paciente {nombre:"Paciente001"})-[r:recibe_tratamiento_con]->(f:Farmaco)-[d:es_diana_de]->(g:Gen)
+RETURN g.nombre, p, r, f, d, g;
+
+MATCH (p:Paciente {nombre:"Paciente001"})-[r:recibe_tratamiento_con]->(f:Farmaco)-[d:es_diana_de]->(g:Gen)
+RETURN g.nombre, p, r, f, d, g;
+
+MATCH (p:Paciente {nombre:"Paciente001"})-[r:recibe_tratamiento_con]->(f:Farmaco)-[d:es_diana_de]->(g:Gen)
+RETURN g.nombre, p, r, f, d, g;
+
+MATCH (p:Paciente {tipo_cancer:"pulmón"})-[r:recibe_tratamiento_con]->(f:Farmaco)
+RETURN f.nombre AS Fármaco_pulmón, r, p, f;
+
+MATCH (p:Paciente)-[r:tiene_mutacion_en]->(g:Gen {nombre:"BRCA1"})
+RETURN p.nombre AS Paciente_BRCA1, r, p, g;
+
+MATCH (p:Paciente)-[r]->(x) RETURN p,r,x;
+
+MATCH ()-[r]->() RETURN type(r) AS relacion, count(*) AS total ORDER BY total DESC;
+
+MATCH (n) RETURN labels(n) AS etiqueta, count(*) AS total ORDER BY total DESC;
+
+LOAD CSV WITH HEADERS FROM 'file:///es_diana_de.csv' AS row
+MATCH (g:Gen {id: toInteger(row.gen_id)})
+MATCH (f:Farmaco {id: toInteger(row.farmaco_id)})
+CREATE (g)-[d:es_diana_de]->(f)
+RETURN d;
+
+LOAD CSV WITH HEADERS FROM 'file:///tiene_mutacion_en.csv' AS row
+MATCH (p:Paciente {id:toInteger(row.paciente_id)})
+MATCH (g:Gen {id:toInteger(row.gen_id)})
+CREATE (p)-[m:tiene_mutacion_en]->(g)
+RETURN m;
+
+LOAD CSV WITH HEADERS FROM 'file:///recibe_tratamiento_con.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)})
+MATCH (f:Farmaco  {id: toInteger(row.farmaco_id)})
+CREATE (p)-[t:recibe_tratamiento_con {dosis: toInteger(row.dosis)}]->(f)
+RETURN t;
+
+LOAD CSV WITH HEADERS FROM 'file:///tiene_mutacion_en.csv' AS row
+MATCH (p:Paciente {id:toInteger(row.paciente_id)}), (g:Gen {id:toInteger(row.gen_id)})
+CREATE (p)-[m:tiene_mutacion_en]->(g)
+RETURN m;
+
+LOAD CSV WITH HEADERS FROM 'file:///farmacos.csv' AS row
+CREATE (:Farmaco {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  mecanismo: row.mecanismo
+});
+
+LOAD CSV WITH HEADERS FROM 'file:///genes.csv' AS row
+CREATE (:Gen {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  mutacion: row.mutacion
+});
+
+LOAD CSV WITH HEADERS FROM 'file:///pacientes.csv' AS row
+CREATE (:Paciente {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  tipo_cancer: row.tipo_cancer,
+  estadio: row.estadio,
+  respuesta: row.respuesta
+});
+
+MATCH (n) DETACH DELETE n;
+
+LOAD CSV WITH HEADERS FROM 'file:///tiene_mutacion_en.csv' AS row
+MATCH (p:Paciente {id:toInteger(row.paciente_id)}), (g:Gen {id:toInteger(row.gen_id)})
+CREATE (p)-[m:tiene_mutacion_en]->(g)
+RETURN m;
+
+LOAD CSV WITH HEADERS FROM 'file:///tiene_mutacion_en.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)}),
+      (g:Gen {id: toInteger(row.gen_id)})
+CREATE (p)-[m:tiene_mutacion_en]->(g)
+RETURN m;
+
+LOAD CSV WITH HEADERS FROM 'file:///es_diana_de.csv' AS row
+MATCH (g:Gen {id: toInteger(row.gen_id)})
+MATCH (f:Farmaco {id: toInteger(row.farmaco_id)})
+CREATE (g)-[d:es_diana_de]->(f)
+RETURN d;
+
+LOAD CSV WITH HEADERS FROM 'file:///recibe_tratamiento_con.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)})
+MATCH (f:Farmaco  {id: toInteger(row.farmaco_id)})
+CREATE (p)-[t:recibe_tratamiento_con {dosis: toInteger(row.dosis)}]->(f);
+
+LOAD CSV WITH HEADERS FROM 'file:///recibe_tratamiento_con.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)})
+MATCH (f:Farmaco  {id: toInteger(row.farmaco_id)})
+CREATE (p)-[t:recibe_tratamiento_con {dosis: toInteger(row.dosis)}]->(f)
+RETURN t;
+
+LOAD CSV WITH HEADERS FROM 'file:///es_diana_de.csv' AS row
+MATCH (g:Gen {id: toInteger(row.gen_id)}),
+      (f:Farmaco {id: toInteger(row.farmaco_id)})
+CREATE (g)-[d:es_diana_de]->(f)
+RETURN d;
+
+LOAD CSV WITH HEADERS FROM 'file:///recibe_tratamiento_con.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)}),
+      (f:Farmaco {id: toInteger(row.farmaco_id)})
+CREATE (p)-[t:recibe_tratamiento_con {dosis: toInteger(row.dosis)}]->(f)
+RETURN t;
+
+LOAD CSV WITH HEADERS FROM 'file:///recibe_tratamiento_con.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)}),
+      (f:Farmaco {id: toInteger(row.farmaco_id)})
+CREATE (p)-[t:recibe_tratamiento_con {dosis: toInteger(row.dosis)}]->(f)
+RETURN t;
+
+LOAD CSV WITH HEADERS FROM 'file:///tiene_mutacion_en.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)}),
+      (g:Gen {id: toInteger(row.gen_id)})
+CREATE (p)-[m:tiene_mutacion_en]->(g)
+RETURN m;
+
+MATCH (p:Paciente)-[r]->(x) RETURN p,r,x;
+
+MATCH (p:Paciente)-[r]->(x) RETURN p,r,x;
+
+MATCH ()-[r]->() RETURN type(r) AS relacion, count(*) AS total ORDER BY total DESC;
+
+MATCH (n) RETURN labels(n) AS etiqueta, count(*) AS total ORDER BY total DESC;
+
+LOAD CSV WITH HEADERS FROM 'file:///es_diana_de.csv' AS row
+MATCH (g:Gen     {id: toInteger(row.gen_id)}),
+      (f:Farmaco {id: toInteger(row.farmaco_id)})
+CREATE (g)-[d:es_diana_de]->(f)
+RETURN d;
+
+LOAD CSV WITH HEADERS FROM 'file:///recibe_tratamiento_con.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)}),
+      (f:Farmaco  {id: toInteger(row.farmaco_id)})
+CREATE (p)-[t:recibe_tratamiento_con {dosis: toInteger(row.dosis)}]->(f)
+RETURN t;
+
+LOAD CSV WITH HEADERS FROM 'file:///tiene_mutacion_en.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)}),
+      (g:Gen      {id: toInteger(row.gen_id)})
+CREATE (p)-[m:tiene_mutacion_en]->(g)
+RETURN m;
+
+LOAD CSV WITH HEADERS FROM 'file:///genes.csv' AS row
+CREATE (:Gen {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  mutacion: row.mutacion
+});
+
+LOAD CSV WITH HEADERS FROM 'file:///pacientes.csv' AS row
+CREATE (:Paciente {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  tipo_cancer: row.tipo_cancer,
+  estadio: row.estadio,
+  respuesta: row.respuesta
+});
+
+MATCH (n) DETACH DELETE n;
+
+MATCH (p:Paciente) RETURN count(p);
+MATCH (g:Gen) RETURN count(g);
+MATCH (f:Farmaco) RETURN count(f);
+MATCH ()-[r]->() RETURN count(r);
+
+LOAD CSV WITH HEADERS FROM 'file:///recibe_tratamiento_con.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)})
+MATCH (f:Farmaco  {id: toInteger(row.farmaco_id)})
+MERGE (p)-[r:RECIBE_TRATAMIENTO_CON]->(f)
+SET r.dosis_mg = toInteger(row.dosis_mg);
+
+LOAD CSV WITH HEADERS FROM 'file:///es_diana_de.csv' AS row
+MATCH (g:Gen      {id: toInteger(row.gen_id)})
+MATCH (f:Farmaco  {id: toInteger(row.farmaco_id)})
+MERGE (g)-[:ES_DIANA_DE]->(f);
+
+LOAD CSV WITH HEADERS FROM 'file:///tiene_mutacion_en.csv' AS row
+MATCH (p:Paciente {id: toInteger(row.paciente_id)})
+MATCH (g:Gen      {id: toInteger(row.gen_id)})
+MERGE (p)-[:TIENE_MUTACION_EN]->(g);
+
+LOAD CSV WITH HEADERS FROM 'file:///farmacos.csv' AS row
+MERGE (f:Farmaco {id: toInteger(row.id)})
+SET f.nombre = row.nombre,
+    f.mecanismo = row.mecanismo;
+
+LOAD CSV WITH HEADERS FROM 'file:///genes.csv' AS row
+MERGE (g:Gen {id: toInteger(row.id)})
+SET g.nombre = row.nombre;
+
+LOAD CSV WITH HEADERS FROM 'file:///pacientes.csv' AS row
+MERGE (p:Paciente {id: toInteger(row.id)})
+SET p.nombre = row.nombre,
+    p.tipo_cancer = row.tipo_cancer,
+    p.estadio = row.estadio,
+    p.respuesta = row.respuesta;
+
+CREATE CONSTRAINT paciente_id IF NOT EXISTS
+FOR (p:Paciente) REQUIRE p.id IS UNIQUE;
+
+CREATE CONSTRAINT gen_id IF NOT EXISTS
+FOR (g:Gen) REQUIRE g.id IS UNIQUE;
+
+CREATE CONSTRAINT farmaco_id IF NOT EXISTS
+FOR (f:Farmaco) REQUIRE f.id IS UNIQUE;
+
+MATCH (n) DETACH DELETE n;
+
+LOAD CSV WITH HEADERS FROM 'file:///farmacos.csv' AS row
+MERGE (f:Farmaco {id: toInteger(row.id)})
+SET f.nombre = row.nombre,
+    f.mecanismo = row.mecanismo;
+
+LOAD CSV WITH HEADERS FROM 'file:///genes.csv' AS row
+MERGE (g:Gen {id: toInteger(row.id)})
+SET g.nombre = row.nombre;
+
+LOAD CSV WITH HEADERS FROM 'file:///pacientes.csv' AS row
+MERGE (p:Paciente {id: toInteger(row.id)})
+SET p.nombre = row.nombre,
+    p.tipo_cancer = row.tipo_cancer,
+    p.estadio = row.estadio,
+    p.respuesta = row.respuesta;
+
+CREATE CONSTRAINT paciente_id IF NOT EXISTS
+FOR (p:Paciente) REQUIRE p.id IS UNIQUE;
+
+CREATE CONSTRAINT gen_id IF NOT EXISTS
+FOR (g:Gen) REQUIRE g.id IS UNIQUE;
+
+CREATE CONSTRAINT farmaco_id IF NOT EXISTS
+FOR (f:Farmaco) REQUIRE f.id IS UNIQUE;
+
+MATCH (n) DETACH DELETE n;
+
+LOAD CSV WITH HEADERS FROM 'file:///pacientes.csv' AS row
+CREATE (:Paciente {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  tipo_cancer: row.tipo_cancer,
+  estadio: row.estadio,
+  respuesta: row.respuesta
+});
+
+CREATE CONSTRAINT paciente_id IF NOT EXISTS FOR (p:Paciente) REQUIRE p.id IS UNIQUE;
+CREATE CONSTRAINT gen_id       IF NOT EXISTS FOR (g:Gen)      REQUIRE g.id IS UNIQUE;
+CREATE CONSTRAINT farmaco_id   IF NOT EXISTS FOR (f:Farmaco)  REQUIRE f.id IS UNIQUE;
+
+LOAD CSV WITH HEADERS FROM 'file:///pacientes.csv' AS row
+CREATE (:Paciente {
+  id: toInteger(row.id),
+  nombre: row.nombre,
+  tipo_cancer: row.tipo_cancer,
+  estadio: row.estadio,
+  respuesta: row.respuesta
+});
+
+CREATE CONSTRAINT paciente_id IF NOT EXISTS FOR (p:Paciente) REQUIRE p.id IS UNIQUE;
+CREATE CONSTRAINT gen_id       IF NOT EXISTS FOR (g:Gen)      REQUIRE g.id IS UNIQUE;
+CREATE CONSTRAINT farmaco_id   IF NOT EXISTS FOR (f:Farmaco)  REQUIRE f.id IS UNIQUE;
+
+MATCH (n) DETACH DELETE n;
+
+MATCH (e:Estudiante)
+RETURN e;
+
+MATCH (n) DETACH DELETE n;
+
+MATCH (e:Estudiante)
+RETURN e;
+
+LOAD CSV WITH HEADERS FROM 'file:///estudiantes.csv' AS csvLine
+CREATE (e:Estudiante {id: toInteger(csvLine.id), nombre: csvLine.nombre});
